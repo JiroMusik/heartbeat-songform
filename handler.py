@@ -232,9 +232,16 @@ def auftrag_holen():
     return _post("/api/analyse/holen", {"ort": ORT, "aufgabe": AUFGABE}).get("auftrag")
 
 
-def auftrag_zurueck(auftrag_id):
+def auftrag_zurueck(auftrag_id, grund=""):
+    """Auftrag freigeben und sagen, WARUM.
+
+    Ohne den Grund sieht der Lichtrechner einen Auftrag, der zurueckkam,
+    und sonst nichts -- die Ursache stuende nur im Protokoll des
+    Anbieters (docs/RECHENORT_BETRIEB.md, Punkt 5).
+    """
     try:
-        _post("/api/analyse/zurueck", {"id": auftrag_id, "ort": ORT})
+        _post("/api/analyse/zurueck",
+              {"id": auftrag_id, "ort": ORT, "grund": str(grund)[:200]})
     except Exception as e:                                  # noqa: BLE001
         print(f"[warn] Rueckgabe fehlgeschlagen: {e}", flush=True)
 
@@ -367,7 +374,7 @@ def _einen_auftrag():
     except Exception as e:                                  # noqa: BLE001
         # Auftrag freigeben, damit ein anderer Rechenort ihn bekommt -- sonst
         # bliebe er bis zum Ablauf der Reservierung liegen.
-        auftrag_zurueck(auftrag_id)
+        auftrag_zurueck(auftrag_id, f"{type(e).__name__}: {e}")
         print(f"[fehler] {auftrag_id}: {type(e).__name__}: {e}", flush=True)
         raise
     finally:
