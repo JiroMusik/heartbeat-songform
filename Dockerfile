@@ -67,6 +67,27 @@ RUN pip freeze | grep -E "^(torch|torchvision|torchaudio)==" > /tmp/sperrliste.t
 RUN python -c "from huggingface_hub import snapshot_download; \
     snapshot_download('ASLP-lab/SongFormer', repo_type='model')"
 
-COPY handler.py /app/handler.py
+# TAILSCALE. Der Lichtrechner ist nur im Tailnet erreichbar -- ohne diesen
+# Client kaeme der Container gar nicht an die Warteschlange. Das offizielle
+# Depot statt eines Installationsskripts aus dem Netz: signierte Pakete,
+# nachvollziehbare Fassung.
+#
+# Am 18.08.2026 fehlte das hier, und der erste RunPod-Build war deshalb
+# wertlos -- ein Container, der rechnen kann, aber niemanden erreicht.
+RUN curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
+        > /usr/share/keyrings/tailscale-archive-keyring.gpg \
+    && curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list \
+        > /etc/apt/sources.list.d/tailscale.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends tailscale \
+    && rm -rf /var/lib/apt/lists/* \
+    && tailscale version
 
-CMD ["python", "-u", "/app/handler.py"]
+COPY handler.py /app/handler.py
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# start.sh tritt dem Tailnet bei, belegt die Erreichbarkeit und uebergibt
+# dann per exec an den Handler. Der Handler selbst weiss von Tailscale
+# nichts -- er spricht HTTP, und die Vermittlung steht in der Umgebung.
+CMD ["/app/start.sh"]
