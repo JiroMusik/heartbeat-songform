@@ -122,14 +122,55 @@ def taxonomie_setzen(name):
 # ---------------------------------------------------------------------------
 # Protokoll v1 -- unveraendert, nur Standardbibliothek
 # ---------------------------------------------------------------------------
+# WIEDERHOLEN, WO ES SICH LOHNT.
+#
+# Am 18.08.2026 gemessen: der Container trat dem Tailnet bei, die
+# Startprobe (GET) kam durch, und zwoelf Sekunden spaeter scheiterte der
+# erste POST mit "502 Bad Gateway". Der 502 stammt vom Tailscale-
+# Vermittler, nicht vom Lichtrechner -- die Verbindung war noch nicht
+# belastbar. Ein einziger Fehlschlag riss damit den ganzen Auftrag ab.
+#
+# WIEDERHOLT WIRD NUR, WAS SICH WIEDERHOLEN LAESST: Verbindungsfehler und
+# die 5xx-Antworten eines Vermittlers. Ein 403 (Schluessel falsch) oder
+# ein 400 (Ergebnis abgelehnt) bleibt beim ersten Mal stehen -- die
+# aendern sich beim zweiten Versuch nicht, und sie zu wiederholen
+# verschleierte nur die Ursache.
+_WIEDERHOLBAR = (502, 503, 504)
+_VERSUCHE = 4
+_PAUSEN_S = (2, 5, 12)
+
+
+def _mit_wiederholung(was, tun):
+    letzter = None
+    for versuch in range(_VERSUCHE):
+        try:
+            return tun()
+        except urllib.error.HTTPError as e:
+            if e.code not in _WIEDERHOLBAR:
+                raise
+            letzter = e
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            letzter = e
+        if versuch < len(_PAUSEN_S):
+            pause = _PAUSEN_S[versuch]
+            print(f"[netz] {was}: {type(letzter).__name__} {letzter} -- "
+                  f"neuer Versuch in {pause}s "
+                  f"({versuch + 2}/{_VERSUCHE})", flush=True)
+            time.sleep(pause)
+    raise letzter
+
+
 def _post(pfad, nutzlast):
     daten = json.dumps(nutzlast).encode("utf-8")
     req = urllib.request.Request(
         f"{BASIS_URL}{pfad}", data=daten, method="POST",
         headers=_kopfzeilen({"Content-Type": "application/json"}))
-    try:
+    def einmal():
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        return _mit_wiederholung(f"POST {pfad}", einmal)
     except urllib.error.HTTPError as e:
         # DEN GRUND MITNEHMEN. Der Server begruendet jede Ablehnung im Rumpf
         # ("beats ist leer", "track passt nicht zur id"). Ohne dieses Lesen
@@ -156,6 +197,10 @@ def auftrag_zurueck(auftrag_id):
 
 
 def wav_laden(wav_pfad, ziel):
+    return _mit_wiederholung(f"GET {wav_pfad}", lambda: _wav_einmal(wav_pfad, ziel))
+
+
+def _wav_einmal(wav_pfad, ziel):
     with urllib.request.urlopen(
             urllib.request.Request(f"{BASIS_URL}{wav_pfad}", headers=_kopfzeilen()),
             timeout=WAV_TIMEOUT) as resp, \

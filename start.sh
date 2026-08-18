@@ -123,6 +123,7 @@ fi
 python - <<'PY'
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -131,22 +132,48 @@ kopf = {}
 if os.environ.get("ZUTRITT_SCHLUESSEL", "").strip():
     kopf["X-Rechenort-Schluessel"] = os.environ["ZUTRITT_SCHLUESSEL"].strip()
 
-try:
-    urllib.request.urlopen(urllib.request.Request(url, headers=kopf), timeout=20)
-    print("[probe] unerwartet: 200 auf eine Anfrage ohne id -- aber erreichbar")
-except urllib.error.HTTPError as e:
-    if e.code == 403:
-        print("[probe] ABBRUCH: 403 vom Lichtrechner -- %s"
-              % e.read().decode("utf-8", "replace")[:200], file=sys.stderr)
-        print("[probe] Entweder stimmt ZUTRITT_SCHLUESSEL nicht, oder die "
-              "Route ist nicht freigegeben (src/zutritt.py).", file=sys.stderr)
-        sys.exit(1)
-    print("[probe] Lichtrechner erreichbar (HTTP %d)" % e.code)
-except Exception as e:
-    print("[probe] ABBRUCH: %s nicht erreichbar -- %s: %s"
-          % (url, type(e).__name__, e), file=sys.stderr)
-    print("[probe] Steht das Tailnet? Ist TS_AUTHKEY gueltig und nicht "
-          "abgelaufen?", file=sys.stderr)
+# MEHRERE VERSUCHE, und zwar aus Erfahrung. Am 18.08.2026 kam diese
+# Probe durch und der erste POST zwoelf Sekunden spaeter bekam vom
+# Tailscale-Vermittler ein "502 Bad Gateway": frisch beigetreten heisst
+# noch nicht belastbar. Ein Container, der deshalb sofort aufgibt,
+# kostet einen ganzen Kaltstart.
+letzter = None
+for versuch in range(5):
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, headers=kopf), timeout=20)
+        print("[probe] unerwartet: 200 auf eine Anfrage ohne id -- aber erreichbar")
+        letzter = None
+        break
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            # AENDERT SICH BEIM ZWEITEN MAL NICHT. Sofort abbrechen,
+            # statt den Fehler viermal zu wiederholen.
+            print("[probe] ABBRUCH: 403 vom Lichtrechner -- %s"
+                  % e.read().decode("utf-8", "replace")[:200], file=sys.stderr)
+            print("[probe] Entweder stimmt ZUTRITT_SCHLUESSEL nicht, oder die "
+                  "Route ist nicht freigegeben (src/zutritt.py).", file=sys.stderr)
+            sys.exit(1)
+        if e.code in (502, 503, 504):
+            letzter = e
+        else:
+            print("[probe] Lichtrechner erreichbar (HTTP %d)" % e.code)
+            letzter = None
+            break
+    except Exception as e:
+        letzter = e
+    if letzter is not None and versuch < 4:
+        pause = (2, 4, 8, 15)[versuch]
+        print("[probe] noch nicht erreichbar (%s) -- neuer Versuch in %ds"
+              % (type(letzter).__name__, pause), flush=True)
+        time.sleep(pause)
+
+if letzter is not None:
+    print("[probe] ABBRUCH: %s nach 5 Versuchen nicht erreichbar -- %s: %s"
+          % (url, type(letzter).__name__, letzter), file=sys.stderr)
+    print("[probe] Steht das Tailnet? Ist TS_AUTHKEY gueltig, und ist er "
+          "als REUSABLE angelegt? Ein einmaliger Schluessel laesst genau "
+          "einen Worker herein, jeder weitere bekommt 'invalid key'.",
+          file=sys.stderr)
     sys.exit(1)
 PY
 
