@@ -1,0 +1,3 @@
+# Bau-Protokoll und Sicherungen gehoeren nicht ins Repo.
+build.log
+*.vor-fix
