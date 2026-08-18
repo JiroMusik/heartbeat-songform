@@ -1,0 +1,8 @@
+# LF, ausnahmslos.
+#
+# Auf Windows wandelt git sonst beim Auschecken in CRLF. In einem Abbild,
+# das auf Linux gebaut wird, ist das kein Schoenheitsfehler: ein Dockerfile
+# oder ein Python-Startskript mit CRLF scheitert an Stellen, die man lange
+# sucht. In dieser Werkstatt ist es am 16.08.2026 schon einmal passiert --
+# eine Schreiboperation machte aus 7723 Zeilen CRLF-Zeilen.
+* text=auto eol=lf
