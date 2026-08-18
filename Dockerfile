@@ -16,7 +16,24 @@
 #                         die bei Inferenz nie laeuft -- der Import steht aber
 #                         am Dateianfang. Siehe scipy-Bruecke im handler.
 
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+# RUNTIME, NICHT DEVEL -- gemessen am 18.08.2026.
+#
+# Das Abbild war 17,8 GB, davon rund neun allein die Basis: ein
+# devel-Abbild mit CUDA-Compiler, Header-Dateien und Werkzeugketten, die
+# zur Laufzeit kein einziges Mal angefasst werden. Wir bauen hier nichts
+# aus Quelltext; alles kommt als fertiges Rad von pip.
+#
+# Das kostet nicht nur Platz. Jede Aenderung an der Endpunkt-Umgebung
+# erzeugt bei RunPod eine neue Version, und die zwingt einen frischen
+# Worker, das Abbild ERNEUT zu ziehen. Am 18.08. war der Endpunkt nach
+# einem Nachmittag bei Version 10 -- zehn Downloads, und jeder von ihnen
+# stand als "warum dauert das so lange" im Weg.
+#
+# Die offizielle Runtime-Variante bringt genau die torch-Fassung mit, die
+# das Abbild ohnehin festnagelt (2.4.1+cu124, s. Sperrliste unten), und
+# wiegt 3,2 statt 9 GB. RunPods eigene Abbilder liegen samt und sonders
+# zwischen 11 und 17 GB; dort war nichts zu holen.
+FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -38,7 +55,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AUFGABE=songform
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg libsndfile1 git \
+        ffmpeg libsndfile1 git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

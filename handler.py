@@ -258,15 +258,62 @@ def _wav_einmal(wav_pfad, ziel):
     return gesamt
 
 
+# WIE VIELE AUFTRAEGE EIN WECKRUF HOLT.
+#
+# Der teure Teil ist der Kaltstart, nicht die Analyse: Abbild ziehen,
+# Tailnet beitreten, Modell laden. Ein warmer Ort, der nach dem ersten
+# Auftrag stehen bleibt, waehrend zwei weitere liegen, verschenkt genau
+# das, was gerade bezahlt wurde. Am 18.08.2026 lagen drei Auftraege in
+# der Schlange, und es brauchte drei Weckrufe -- zwei davon gingen
+# verloren.
+#
+# Also: holen, bis nichts mehr kommt. Das ist auch die Bauform des
+# Protokolls ("holen statt zuteilen", docs/ANLEITUNG_ANALYSE_WORKER.md):
+# wer da ist und kann, nimmt.
+#
+# ZWEI GRENZEN, damit daraus kein Dauerlauf wird:
+#   - die Warteschlange gibt nichts mehr her
+#   - die Laufzeit naeht sich der Ausfuehrungsgrenze des Endpunkts
+# Die zweite kennt der Container nicht von selbst; sie steht in der
+# Umgebung, weil sie eine Einstellung des Endpunkts ist und keine
+# Eigenschaft dieses Codes.
+LAUFZEIT_GRENZE_S = float(os.environ.get("LAUFZEIT_GRENZE_S", "480") or 480)
+
+
 def handler(job):
     eingabe = job.get("input") or {}
     taxonomie_setzen(eingabe.get("taxonomie", TAXONOMIE))
 
+    t_start = time.monotonic()
+    erledigt, letzte_dauer = [], 0.0
+    while True:
+        rest = LAUFZEIT_GRENZE_S - (time.monotonic() - t_start)
+        # Nicht anfangen, was nicht mehr fertig wird: ein abgeschnittener
+        # Auftrag kostet die Reservierungsfrist, in der ihn niemand
+        # anfassen kann.
+        if erledigt and rest < letzte_dauer * 1.3:
+            print(f"[schluss] noch {rest:.0f}s Laufzeit -- das reicht fuer "
+                  f"keinen weiteren Auftrag", flush=True)
+            break
+        ergebnis = _einen_auftrag()
+        if not ergebnis:
+            break
+        erledigt.append(ergebnis)
+        letzte_dauer = ergebnis.get("sekunden") or letzte_dauer
+
+    if not erledigt:
+        # Normalfall, kein Fehler: der Wecker kam, aber ein anderer
+        # Rechenort war schneller oder der Auftrag ist zurueckgezogen.
+        return {"auftrag": None}
+    return {"auftrag": erledigt[0]["auftrag"], "erledigt": len(erledigt),
+            "auftraege": erledigt}
+
+
+def _einen_auftrag():
+    """Einen Auftrag holen und abarbeiten. None, wenn keiner anliegt."""
     auftrag = auftrag_holen()
     if not auftrag:
-        # Normalfall, kein Fehler: der Wecker kam, aber ein anderer Rechenort
-        # war schneller oder der Auftrag ist zurueckgezogen worden.
-        return {"auftrag": None}
+        return None
 
     auftrag_id = auftrag["id"]
     fd, tmp = tempfile.mkstemp(prefix="songform_", suffix=".wav")
