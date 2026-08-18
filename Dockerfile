@@ -29,7 +29,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     # Leer = offizielles Modell. Fuer ein spaeter nachtrainiertes Modell hier
     # das eigene HuggingFace-Repo eintragen, siehe training/README.md.
     MODELL_REPO="" \
-    ORT_NAME=cloud \
+    # KEIN Vorgabewert fuer ORT_NAME, mit Absicht. Er muss die KENNUNG des
+    # Rechenorts aus config/rechenorte.json tragen. Steht dort etwas
+    # anderes, liefert `kann(ort, aufgabe)` einfach False und
+    # /api/analyse/holen antwortet {"auftrag": null} -- ununterscheidbar
+    # von "gerade nichts zu tun". Der Auftrag bliebe liegen, der Endpunkt
+    # meldete Erfolg. start.sh bricht deshalb ab, wenn er leer ist.
     AUFGABE=songform
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

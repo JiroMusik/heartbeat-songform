@@ -31,6 +31,23 @@ if [ -z "$BASIS_URL" ]; then
     exit 1
 fi
 
+# ORT_NAME IST PFLICHT, und zwar weil sein Fehlen sonst NICHT auffiele.
+#
+# Der Lichtrechner prueft mit `kann(ort, aufgabe)`, ob dieser Ort die
+# Aufgabe traegt. Passt der Name nicht, ist die Antwort auf
+# /api/analyse/holen schlicht {"auftrag": null} -- dasselbe, was ein
+# Endpunkt bekommt, fuer den gerade nichts anliegt. Der Worker meldete
+# also Erfolg, der Auftrag bliebe liegen, und niemand saehe einen Fehler.
+#
+# Am 18.08.2026 hiess der Ort intern `runpod` und wurde als "cloud"
+# angezeigt; ein geratener Vorgabewert haette genau hier zugeschlagen.
+if [ -z "$ORT_NAME" ]; then
+    echo "[start] ABBRUCH: ORT_NAME ist nicht gesetzt." >&2
+    echo "[start] Er muss die KENNUNG aus config/rechenorte.json tragen" >&2
+    echo "[start] (die linke Spalte), nicht den Anzeigenamen." >&2
+    exit 1
+fi
+
 if [ -n "$TS_AUTHKEY" ]; then
     echo "[tailnet] trete bei ..."
     tailscaled \
@@ -54,11 +71,33 @@ if [ -n "$TS_AUTHKEY" ]; then
     # sich in der Tailscale-Konsole unterscheiden lassen, statt sich
     # gegenseitig zu verdraengen.
     NAME="rechenort-${ORT_NAME:-cloud}-${RUNPOD_POD_ID:-$(hostname)}"
+
+    # TAGS, und warum sie hier keine Kuer sind.
+    #
+    # Ein Auth-Key laeuft nach spaetestens 90 Tagen ab -- dann meldet sich
+    # kein Worker mehr an, und niemand merkt es, bis ein Auftrag liegen
+    # bleibt. Ein OAuth-Client (`tskey-client-...`) laeuft NICHT ab und
+    # loest sich seinen Ephemeral-Key bei jedem Start selbst. Tailscale
+    # verlangt dafuer aber einen Tag: ein OAuth-Client ohne
+    # --advertise-tags wird abgewiesen.
+    #
+    # Der Tag ist ausserdem der Griff, an dem die ACL haengt: "wer
+    # tag:rechenort traegt, darf dmx-control:5555 und sonst nichts".
+    # Und er schaltet den Node-Key-Ablauf fuer das Geraet ab.
+    #
+    # Leer lassen ist erlaubt -- dann gilt der klassische Auth-Key-Weg.
+    TAGS=""
+    if [ -n "$TS_TAGS" ]; then
+        TAGS="--advertise-tags=$TS_TAGS"
+        echo "[tailnet] Tags: $TS_TAGS"
+    fi
+
     tailscale --socket=/tmp/tailscaled.sock up \
         --authkey="$TS_AUTHKEY" \
         --hostname="$NAME" \
         --accept-dns=false \
-        --accept-routes=false
+        --accept-routes=false \
+        $TAGS
 
     # urllib im Handler liest diese Variablen von selbst (getproxies()).
     # Deshalb steht im Handler keine Zeile ueber Tailscale -- er spricht
