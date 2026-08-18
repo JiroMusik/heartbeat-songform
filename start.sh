@@ -141,13 +141,52 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, "/app")
 import netz                                              # noqa: E402
 print("[netz] Weg ins Tailnet: %s" % netz.einrichten(), flush=True)
 
-url = os.environ["BASIS_URL"].rstrip("/") + "/api/analyse/wav"
+# WELCHE KARTE? Am 19.08.2026 starb der Worker reihenweise in RunPods
+# eigener Tauglichkeitspruefung:
+#
+#   Fitness check failed: _cuda_init_check | CUDA error: no kernel
+#   image is available for execution on the device
+#
+# Das ist ein Architektur-Fehlgriff -- das uebersetzte Maschinenprogramm
+# im Abbild passt nicht zur Karte. WELCHE Karte es war, stand nirgends,
+# wo das System hinsieht: die Worker-Protokolle des Anbieters sind nur
+# ueber dessen Konsole lesbar (gemessen: die REST-Beschreibung kennt
+# keine Log-Route, GraphQL-Introspektion ist abgeschaltet). Also wurde
+# geraten, welche der sieben zugelassenen Kartentypen schuld ist, und
+# das kostete einen Abend.
+#
+# Die Antwort haengt jetzt an der Startprobe, die ohnehin laeuft: sie
+# steht damit im Zugriffsprotokoll des Lichtrechners, ohne neue Route,
+# ohne Zutrittsregel und ohne eine Zeile dort drueben.
+#
+# nvidia-smi statt torch: es antwortet auch dann noch, wenn genau der
+# CUDA-Aufbau scheitert, um den es hier geht.
+def _karte():
+    import subprocess
+    try:
+        aus = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,driver_version",
+             "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=15)
+        erste = (aus.stdout or "").strip().splitlines()
+        return erste[0].strip() if erste else "nvidia-smi ohne Ausgabe"
+    except Exception as e:                              # noqa: BLE001
+        return "%s: %s" % (type(e).__name__, e)
+
+
+KARTE = _karte()
+print("[karte] %s" % KARTE, flush=True)
+
+url = (os.environ["BASIS_URL"].rstrip("/") + "/api/analyse/wav?ort="
+       + urllib.parse.quote(os.environ.get("ORT_NAME", "?"))
+       + "&karte=" + urllib.parse.quote(KARTE))
 kopf = {}
 if os.environ.get("ZUTRITT_SCHLUESSEL", "").strip():
     kopf["X-Rechenort-Schluessel"] = os.environ["ZUTRITT_SCHLUESSEL"].strip()
