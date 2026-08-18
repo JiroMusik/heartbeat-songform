@@ -38,7 +38,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
+# TORCH BLEIBT, WAS DAS BASIS-ABBILD MITBRINGT.
+#
+# Am 18.08.2026 im fertigen Abbild gemessen: torch 2.13.0+cu130, obwohl das
+# Basis-Abbild "pytorch:2.4.0" heisst. Eines der Zusatzpakete zieht torch
+# als Abhaengigkeit hoch, und pip nimmt dann die neueste Fassung. Damit
+# steckte im Abbild NICHT die Kombination, die auf dem StudioPC erarbeitet
+# wurde -- und genau daneben steht der Hinweis, dass torchvision aus
+# demselben Index kommen muss wie torch.
+#
+# Die Sperrliste entsteht aus dem, was schon da ist. So steht die Nummer an
+# keiner zweiten Stelle: wer das Basis-Abbild wechselt, wechselt sie mit.
+RUN pip freeze | grep -E "^(torch|torchvision|torchaudio)==" > /tmp/sperrliste.txt \
+    && cat /tmp/sperrliste.txt \
+    && pip install --no-cache-dir -c /tmp/sperrliste.txt \
         "transformers==4.51.1" \
         huggingface_hub \
         librosa soundfile \
