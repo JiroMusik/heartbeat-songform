@@ -88,7 +88,20 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg \
     && rm -rf /var/lib/apt/lists/* \
     && tailscale version
 
+# PySocks SPAET, als eigene Schicht.
+#
+# Python liest `ALL_PROXY` nicht von selbst -- `urllib` kennt nur
+# `http_proxy` und spricht kein SOCKS. PySocks ist die Art, wie ein
+# Python-Programm die dokumentierte Variable ueberhaupt befolgen kann
+# (siehe netz.py).
+#
+# Hier unten und nicht oben bei den grossen Paketen: eine Aenderung an
+# der pip-Zeile erzeugt auch die gebackenen Gewichte neu, und das sind
+# zwanzig Minuten Bauzeit fuer ein Paket von wenigen Kilobyte.
+RUN pip install --no-cache-dir pysocks
+
 COPY handler.py /app/handler.py
+COPY netz.py /app/netz.py
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 

@@ -28,6 +28,7 @@ import json
 import urllib.error
 import urllib.request
 
+import netz
 import runpod
 
 BASIS_URL = os.environ.get("LXC_BASIS_URL", "http://lxc:5555")
@@ -95,6 +96,11 @@ _vertraeglichkeit()
 import torch  # noqa: E402
 from huggingface_hub import snapshot_download  # noqa: E402
 from transformers import AutoModel  # noqa: E402
+
+# ERST DEN WEG, DANN DAS MODELL. Ohne das laed der Container vierzig
+# Sekunden lang Gewichte, um danach festzustellen, dass er niemanden
+# erreicht.
+print(f"[netz] Weg ins Tailnet: {netz.einrichten()}", flush=True)
 
 print(f"[start] lade Modell {MODELL_REPO}", flush=True)
 _t0 = time.monotonic()

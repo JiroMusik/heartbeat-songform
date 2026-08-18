@@ -52,8 +52,8 @@ if [ -n "$TS_AUTHKEY" ]; then
     echo "[tailnet] trete bei ..."
     tailscaled \
         --tun=userspace-networking \
+        --socks5-server=127.0.0.1:1055 \
         --outbound-http-proxy-listen=127.0.0.1:1055 \
-        --socks5-server=127.0.0.1:1056 \
         --state=/tmp/tailscaled.state \
         --socket=/tmp/tailscaled.sock \
         > /tmp/tailscaled.log 2>&1 &
@@ -99,11 +99,23 @@ if [ -n "$TS_AUTHKEY" ]; then
         --accept-routes=false \
         $TAGS
 
-    # urllib im Handler liest diese Variablen von selbst (getproxies()).
-    # Deshalb steht im Handler keine Zeile ueber Tailscale -- er spricht
-    # weiterhin einfach HTTP.
-    export http_proxy="http://127.0.0.1:1055"
-    export https_proxy="http://127.0.0.1:1055"
+    # GENAU DIE DREI VARIABLEN AUS DER DOKU
+    # (tailscale.com/docs/concepts/userspace-networking):
+    #   ALL_PROXY=socks5://localhost:1055/
+    #   HTTP_PROXY=http://localhost:1055/
+    #   http_proxy=http://localhost:1055/
+    #
+    # Der HTTP-Vermittler allein reichte NICHT. Am 18.08.2026 gemessen:
+    # die Startprobe (GET) kam beim Lichtrechner an, der erste POST
+    # scheiterte viermal mit "502 Bad Gateway", und im Protokoll des
+    # Lichtrechners stand kein einziger POST. Die Doku nennt den Grund,
+    # ohne den Fall zu beschreiben: "The HTTP proxy is only for that
+    # protocol" -- SOCKS5 dagegen ist "a more general and flexible proxy
+    # that can work with any traffic".
+    export ALL_PROXY="socks5://127.0.0.1:1055/"
+    export HTTP_PROXY="http://127.0.0.1:1055/"
+    export http_proxy="http://127.0.0.1:1055/"
+    export NO_PROXY="127.0.0.1,localhost"
     export no_proxy="127.0.0.1,localhost"
 
     echo "[tailnet] beigetreten als $NAME, Adresse $(tailscale --socket=/tmp/tailscaled.sock ip -4 2>/dev/null || echo unbekannt)"
@@ -126,6 +138,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, "/app")
+import netz                                              # noqa: E402
+print("[netz] Weg ins Tailnet: %s" % netz.einrichten(), flush=True)
 
 url = os.environ["BASIS_URL"].rstrip("/") + "/api/analyse/wav"
 kopf = {}
