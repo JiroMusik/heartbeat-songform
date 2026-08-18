@@ -29,11 +29,44 @@
 # einem Nachmittag bei Version 10 -- zehn Downloads, und jeder von ihnen
 # stand als "warum dauert das so lange" im Weg.
 #
-# Die offizielle Runtime-Variante bringt genau die torch-Fassung mit, die
-# das Abbild ohnehin festnagelt (2.4.1+cu124, s. Sperrliste unten), und
-# wiegt 3,2 statt 9 GB. RunPods eigene Abbilder liegen samt und sonders
-# zwischen 11 und 17 GB; dort war nichts zu holen.
-FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+# Die offizielle Runtime-Variante wiegt 3,2 statt 9 GB. RunPods eigene
+# Abbilder liegen samt und sonders zwischen 11 und 17 GB; dort war nichts
+# zu holen.
+
+# TORCH 2.8 / CUDA 12.8 -- WEIL DIE FLOTTE BLACKWELL KENNT UND 2.4 NICHT.
+#
+# Hier stand 2.4.1+cu124. Gemessen am 19.08.2026: der Worker starb
+# reihenweise in RunPods Tauglichkeitspruefung, und PyTorch selbst hat
+# im Protokoll buchstabiert, warum --
+#
+#   NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb with CUDA
+#   capability sm_120 is not compatible with the current PyTorch
+#   installation. The current PyTorch install supports CUDA capabilities
+#   sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90.
+#
+# Blackwell ist sm_120; 2.4 hoert bei sm_90 auf. Es traf nicht immer:
+# derselbe Endpunkt lieferte einmal sauber ab und danach stundenlang
+# nichts -- je nachdem, welche Karte der Worker bekam. Genau diese Form
+# von Zufall ist das Teuerste, was ein System haben kann.
+#
+# Die Klasse "16 GB" schuetzt davor NICHT: was dort als 24-GB-Karte
+# erscheint, kann eine MIG-Scheibe einer grossen Blackwell sein.
+#
+# Es waere moeglich gewesen, die Kartenliste am Endpunkt auf Ampere zu
+# verengen. Das ist aber ein Rueckzug auf schrumpfende Hardware -- die
+# Flotte wird jeden Monat neuer, nicht aelter. Ein Abbild, das die
+# aktuellen Karten kennt, ist die Loesung; eine Kartenliste ist eine
+# Vertagung.
+#
+# sm_120 gibt es ab torch 2.7 mit CUDA 12.8. Genommen wird 2.8.0: eine
+# Fassung weiter als das Minimum, damit nicht die allererste
+# Blackwell-Unterstuetzung getragen wird.
+#
+# ACHTUNG BEIM ENDPUNKT: cu128 verlangt einen Treiber >= 12.8. Die
+# erlaubten CUDA-Fassungen dort muessen entsprechend auf 12.8 und
+# neuer stehen -- sonst landet der Worker auf einem zu alten Rechner und
+# der Fehler kehrt seitenverkehrt zurueck.
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
