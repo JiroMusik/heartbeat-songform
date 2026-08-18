@@ -2,13 +2,23 @@
 """Songform-Rechenort als RunPod-Serverless-Endpunkt.
 
 Dieser Container ist ein Rechenort im Sinne der Anleitung: Er holt sich seinen
-Auftrag selbst beim LXC, laedt das WAV, rechnet und liefert das Ergebnis
-zurueck -- ueber dieselben Endpunkte wie jeder andere Rechenort. Der einzige
-Unterschied: Er pollt nicht, sondern wird geweckt. Serverless skaliert auf
-null; zwischen zwei Aufrufen existiert er nicht und koennte gar nicht fragen.
+Auftrag selbst beim Lichtrechner, laedt das WAV, rechnet und liefert das Ergebnis
+zurueck -- ueber dieselben Endpunkte wie jeder andere Rechenort.
 
-Erreichbar ist der LXC ueber den Tunnel (Tailscale). Es wird kein eingehender
-Port am LXC geoeffnet -- der Container baut die Verbindung auf.
+ZWEI BETRIEBSARTEN, dasselbe Abbild (s. BETRIEBSART am Dateiende):
+
+  serverless  Der Ort wird GEWECKT. Serverless skaliert auf null; zwischen
+              zwei Aufrufen existiert er nicht und koennte gar nicht fragen.
+              Deshalb klingelt der Lichtrechner, sobald ein Auftrag entsteht.
+  schleife    Der Ort FRAGT SELBST, in Ruhe, immer wieder -- das Geruest aus
+              docs/ANLEITUNG_ANALYSE_WORKER.md Paragraph 5. Fuer jede Maschine,
+              die ohnehin laeuft: Studio-PC, Laptop, zweiter Server.
+
+Beides ist derselbe Weg zum Auftrag (/api/analyse/holen); der Unterschied ist
+nur, wer den ersten Schritt tut.
+
+Erreichbar ist der Lichtrechner ueber den Tunnel (Tailscale). Es wird kein eingehender
+Port am Lichtrechner geoeffnet -- der Container baut die Verbindung auf.
 
 Eingabe:
     {"input": {}}                      -> holt den naechsten songform-Auftrag
@@ -31,7 +41,30 @@ import urllib.request
 import netz
 import runpod
 
-BASIS_URL = os.environ.get("LXC_BASIS_URL", "http://lxc:5555")
+# DIE ADRESSE DES LICHTRECHNERS -- ein Name, keine Erfindung, und kein
+# Rechnername.
+#
+# Hier stand einmal ein zweiter Variablenname, der die Maschine benannte,
+# auf der der Dienst gerade zufaellig laeuft. Das ist doppelt falsch:
+#
+#   1. Er stimmte nicht mit dem ueberein, den start.sh prueft. Gesetzt war
+#      der eine, gelesen der andere, also griff ein Vorgabewert -- eine
+#      erfundene Adresse. Der Vermittler konnte sie nicht aufloesen und
+#      antwortete "502 Bad Gateway", woraufhin am 18.08.2026 eine Stunde
+#      lang der Tunnel verdaechtigt wurde, der einwandfrei lief.
+#   2. Er zementierte eine Kiste. Wo der Lichtrechner laeuft, ist
+#      Konfiguration: heute ein Container im Studio, morgen ein Barebone,
+#      uebermorgen beim Kunden. Ein Variablenname, der die heutige
+#      Hardware traegt, ist beim ersten Umzug eine Luege.
+#
+# KEIN VORGABEWERT. Eine erfundene Adresse macht aus einer fehlenden
+# Einstellung einen Netzwerkfehler, und den sucht man an der falschen
+# Stelle. Fehlt sie, bricht der Start ab und sagt das auch.
+BASIS_URL = (os.environ.get("BASIS_URL") or "").strip().rstrip("/")
+if not BASIS_URL:
+    raise SystemExit(
+        "[start] ABBRUCH: BASIS_URL ist nicht gesetzt. Sie muss auf den "
+        "Lichtrechner zeigen, z. B. http://100.73.50.47:5555")
 ORT = os.environ.get("ORT_NAME", "cloud")
 AUFGABE = os.environ.get("AUFGABE", "songform")
 # Vorgabe des Modells ist SongForm-HX-8Class (8 Klassen). SongForm-HX-Widen
@@ -55,7 +88,7 @@ TAXONOMIE_IDS = {
     # "EDMFormer": 9,         # erst mit eigenem, nachtrainiertem Modell
 }
 
-# ZUTRITT. Der LXC prueft jede Anfrage aus dem Tailnet (100.64.0.0/10,
+# ZUTRITT. Der Lichtrechner prueft jede Anfrage aus dem Tailnet (100.64.0.0/10,
 # fd7a:115c:a1e0::/48) auf diese Kopfzeile -- ohne sie antwortet er mit 403,
 # und zwar auf ALLE vier Routen einschliesslich des WAV-Downloads. Der
 # Studio-PC im Studio-Netz braucht sie nicht; dieser Container schon.
@@ -130,11 +163,15 @@ def taxonomie_setzen(name):
 # ---------------------------------------------------------------------------
 # WIEDERHOLEN, WO ES SICH LOHNT.
 #
-# Am 18.08.2026 gemessen: der Container trat dem Tailnet bei, die
-# Startprobe (GET) kam durch, und zwoelf Sekunden spaeter scheiterte der
-# erste POST mit "502 Bad Gateway". Der 502 stammt vom Tailscale-
-# Vermittler, nicht vom Lichtrechner -- die Verbindung war noch nicht
-# belastbar. Ein einziger Fehlschlag riss damit den ganzen Auftrag ab.
+# Hier stand, der 502 vom 18.08.2026 komme daher, dass eine frisch
+# aufgebaute Tunnelverbindung "noch nicht belastbar" sei. Das war falsch,
+# und der Irrtum hat Stunden gekostet: der Vermittler bekam eine
+# unaufloesbare Adresse (s. BASIS_URL oben) und meldete pflichtgemaess
+# 502. Der Tunnel war nie das Problem.
+#
+# Die Wiederholung bleibt trotzdem -- ein Rechenort haengt an einer
+# Leitung, und eine Leitung zuckt. Sie ist nur keine Behandlung fuer
+# einen Konfigurationsfehler mehr, sondern das, was sie sein soll.
 #
 # WIEDERHOLT WIRD NUR, WAS SICH WIEDERHOLEN LAESST: Verbindungsfehler und
 # die 5xx-Antworten eines Vermittlers. Ein 403 (Schluessel falsch) oder
@@ -293,4 +330,55 @@ def handler(job):
             pass
 
 
-runpod.serverless.start({"handler": handler})
+# ZWEI BETRIEBSARTEN, EIN ABBILD.
+#
+# Serverless heisst: jemand weckt uns, wir arbeiten einen Auftrag ab und
+# verschwinden wieder. Das passt zu RunPod und zu nichts sonst.
+#
+# Ein Rechenort im eigenen Netz -- der Studio-PC, ein Laptop, irgendeine
+# Maschine mit Grafikkarte -- soll dagegen von SICH AUS fragen. Genau das
+# ist das Modell des Systems: "der Lichtrechner gibt die Datei an irgendeinen
+# Worker, und wer die Rolle kann, nimmt den Auftrag". Ohne diese
+# Betriebsart kann das Abbild das nicht, obwohl der ganze Rest
+# identisch ist.
+#
+# Umgeschaltet wird ueber BETRIEBSART, nicht ueber ein zweites Abbild:
+# zwei Abbilder waeren zwei Staende, und einer davon waere irgendwann
+# der aeltere.
+_BETRIEBSART = os.environ.get("BETRIEBSART", "serverless").strip().lower()
+_PAUSE_S = float(os.environ.get("SCHLEIFE_PAUSE_S", "20") or 20)
+
+
+def schleife():
+    """Holen, rechnen, abliefern -- bis jemand abbricht.
+
+    Ist nichts zu tun, wird gewartet statt gefragt: die Warteschlange
+    laeuft nicht weg, und ein Worker, der im Sekundentakt anklopft,
+    kostet nur Strom.
+    """
+    print(f"[schleife] Rechenort {ORT} fragt alle {_PAUSE_S:.0f}s nach "
+          f"Aufgabe '{AUFGABE}'", flush=True)
+    leer = 0
+    while True:
+        try:
+            ergebnis = handler({"input": {}})
+        except Exception as e:                              # noqa: BLE001
+            # NICHT STERBEN. Ein Netzfehler oder ein kaputter Auftrag
+            # darf einen Dauerlaeufer nicht beenden -- der Auftrag bleibt
+            # ohnehin in der Warteschlange stehen.
+            print(f"[schleife] Fehler: {type(e).__name__}: {e}", flush=True)
+            time.sleep(_PAUSE_S)
+            continue
+        if (ergebnis or {}).get("auftrag"):
+            leer = 0
+            continue          # gleich weiter, es koennte mehr anliegen
+        leer += 1
+        if leer == 1:
+            print("[schleife] nichts zu tun -- warte", flush=True)
+        time.sleep(_PAUSE_S)
+
+
+if _BETRIEBSART == "schleife":
+    schleife()
+else:
+    runpod.serverless.start({"handler": handler})

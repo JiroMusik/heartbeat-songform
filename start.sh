@@ -25,9 +25,13 @@ set -e
 
 echo "[start] Rechenort '${ORT_NAME}' fuer Aufgabe '${AUFGABE}'"
 
+# EIN NAME, in dieser Datei und im Handler derselbe. Zwei aehnliche
+# Regeln an zwei Stellen sind schlimmer als eine strenge: dann entscheidet
+# die Datei, und nicht der Vertrag.
 if [ -z "$BASIS_URL" ]; then
     echo "[start] ABBRUCH: BASIS_URL ist nicht gesetzt." >&2
-    echo "[start] Ohne Adresse des Lichtrechners gibt es nichts zu holen." >&2
+    echo "[start] Sie muss auf den Lichtrechner zeigen, z. B." >&2
+    echo "[start]   BASIS_URL=http://100.73.50.47:5555" >&2
     exit 1
 fi
 
