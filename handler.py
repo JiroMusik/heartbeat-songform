@@ -60,8 +60,16 @@ import runpod
 # KEIN VORGABEWERT. Eine erfundene Adresse macht aus einer fehlenden
 # Einstellung einen Netzwerkfehler, und den sucht man an der falschen
 # Stelle. Fehlt sie, bricht der Start ab und sagt das auch.
+#
+# AUSSER in der Betriebsart "direkt": dort steckt das Audio in der
+# Anfrage und das Ergebnis geht als Antwort zurueck -- der Container
+# ruft NIEMANDEN an und braucht deshalb weder Adresse noch Tunnel noch
+# Zutritt. Das ist die Produkt-Betriebsart (25.08.2026): ein Kunde
+# soll einen Cloud-Worker bereitstellen koennen, ohne ein einziges
+# Geheimnis in den Container zu legen.
+_BETRIEBSART = os.environ.get("BETRIEBSART", "serverless").strip().lower()
 BASIS_URL = (os.environ.get("BASIS_URL") or "").strip().rstrip("/")
-if not BASIS_URL:
+if not BASIS_URL and _BETRIEBSART != "direkt":
     raise SystemExit(
         "[start] ABBRUCH: BASIS_URL ist nicht gesetzt. Sie muss auf den "
         "Lichtrechner zeigen, z. B. http://dmx-control:5555 -- der "
@@ -288,9 +296,96 @@ def _wav_einmal(wav_pfad, ziel):
 LAUFZEIT_GRENZE_S = float(os.environ.get("LAUFZEIT_GRENZE_S", "480") or 480)
 
 
+def _direkt(eingabe):
+    """Betriebsart "direkt": das Audio steckt in der Anfrage, das
+    Ergebnis geht als Antwort zurueck.
+
+    Kein Tunnel, kein Rueckkanal, kein Geheimnis im Container -- der
+    Lichtrechner schickt den Titel komprimiert mit (Vorbis/Opus, mono)
+    und nimmt die Gliederung aus dem Job-Ergebnis. Die Nutzlast-Deckel
+    des Anbieters (10 MB /run, 20 MB /runsync) prueft der ABSENDER vor
+    dem Senden; hier wird nur gerechnet.
+
+    Fehler kommen als {"fehler": "..."} zurueck, nie als Absturz: ein
+    geplatzter Job saehe von aussen aus wie eine kaputte Karte, und
+    dessen Protokoll ist nur in der Konsole des Anbieters lesbar.
+    """
+    import base64
+    import subprocess
+
+    kennung = eingabe.get("id") or "?"
+    form = str(eingabe.get("format") or "ogg").strip().lstrip(".").lower()
+    if not eingabe.get("audio_b64"):
+        return {"fehler": "audio_b64 fehlt in der Anfrage"}
+    try:
+        roh = base64.b64decode(eingabe["audio_b64"], validate=True)
+    except Exception as e:                                  # noqa: BLE001
+        return {"fehler": f"audio_b64 nicht dekodierbar: {e}"}
+
+    fd, quelle = tempfile.mkstemp(prefix="songform_", suffix="." + form)
+    os.close(fd)
+    fd, wav = tempfile.mkstemp(prefix="songform_", suffix=".wav")
+    os.close(fd)
+    try:
+        with open(quelle, "wb") as fh:
+            fh.write(roh)
+        # ffmpeg statt eines Python-Dekoders: es liest jedes Format, das
+        # ein Absender sinnvoll waehlen kann, und liegt ohnehin im Abbild.
+        lauf = subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", quelle, "-ac", "1", "-ar", "44100", wav],
+            capture_output=True, text=True, timeout=180)
+        if lauf.returncode != 0:
+            return {"fehler": "ffmpeg: " + (lauf.stderr or "?")[-300:]}
+
+        t0 = time.monotonic()
+        with torch.no_grad():
+            roh_abschnitte = MODELL(wav)
+        sekunden = time.monotonic() - t0
+        sections = [{"start": round(float(s["start"]), 3),
+                     "end": round(float(s["end"]), 3),
+                     "label": s["label"]} for s in roh_abschnitte]
+        print(f"[ok] {kennung}: {len(roh)/1e6:.1f} MB Paket, Analyse "
+              f"{sekunden:.1f}s, {len(sections)} Abschnitte", flush=True)
+        # Die Nutzlast ist bereits das, was /api/analyse/ergebnis auf dem
+        # Lichtrechner erwartet -- der Absender reicht sie unveraendert
+        # an analyse_queue.ergebnis_annehmen weiter.
+        return {
+            "id": eingabe.get("id"),
+            "track": eingabe.get("track"),
+            "dauer_s": eingabe.get("dauer_s"),
+            "aufgabe": AUFGABE,
+            "worker": f"{ORT}:songformer",
+            "konfidenz": 0.7,   # SongFormer gibt kein eigenes Mass heraus
+            "sections": sections,
+            "sekunden": round(sekunden, 1),
+            "taxonomie": MODUL.DATASET_LABEL,
+        }
+    except Exception as e:                                  # noqa: BLE001
+        return {"fehler": f"{type(e).__name__}: {e}"}
+    finally:
+        for pfad in (quelle, wav):
+            try:
+                os.unlink(pfad)
+            except OSError:
+                pass
+
+
 def handler(job):
     eingabe = job.get("input") or {}
     taxonomie_setzen(eingabe.get("taxonomie", TAXONOMIE))
+
+    # SELBSTBESCHREIBENDE EINGABE: traegt sie Audio, ist sie ein
+    # Direkt-Auftrag -- unabhaengig von der Betriebsart. So kann ein
+    # Endpoint, der noch als Weck-Ort konfiguriert ist, trotzdem schon
+    # Direkt-Auftraege annehmen (und umgekehrt bleibt nichts liegen).
+    if eingabe.get("audio_b64"):
+        return _direkt(eingabe)
+    if not BASIS_URL:
+        # Direkt-Container ohne Audio in der Anfrage: hier gibt es
+        # nichts zu holen, und niemanden, bei dem man holen koennte.
+        return {"fehler": "Anfrage ohne audio_b64, und der Container "
+                          "kennt keinen Lichtrechner (BETRIEBSART direkt)"}
 
     t_start = time.monotonic()
     erledigt, letzte_dauer = [], 0.0
@@ -399,8 +494,8 @@ def _einen_auftrag():
 #
 # Umgeschaltet wird ueber BETRIEBSART, nicht ueber ein zweites Abbild:
 # zwei Abbilder waeren zwei Staende, und einer davon waere irgendwann
-# der aeltere.
-_BETRIEBSART = os.environ.get("BETRIEBSART", "serverless").strip().lower()
+# der aeltere. (_BETRIEBSART selbst steht oben bei BASIS_URL -- die
+# Adress-Pflicht haengt daran.)
 _PAUSE_S = float(os.environ.get("SCHLEIFE_PAUSE_S", "20") or 20)
 
 

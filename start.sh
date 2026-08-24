@@ -25,6 +25,16 @@ set -e
 
 echo "[start] Rechenort '${ORT_NAME}' fuer Aufgabe '${AUFGABE}'"
 
+# BETRIEBSART "direkt" (Produkt-Weg, 25.08.2026): das Audio steckt in
+# der Anfrage, das Ergebnis geht als Antwort zurueck. Der Container
+# ruft niemanden an -- kein Tunnel, keine Basis-Adresse, kein Zutritt,
+# KEIN GEHEIMNIS in der Umgebung. Alles unterhalb dieses Blocks dient
+# den Ruf-Betriebsarten (Weckruf/Schleife) und entfaellt hier.
+if [ "$(echo "${BETRIEBSART:-serverless}" | tr 'A-Z' 'a-z')" = "direkt" ]; then
+    echo "[start] Betriebsart 'direkt' -- uebergebe an den Handler"
+    exec python -u /app/handler.py
+fi
+
 # EIN NAME, in dieser Datei und im Handler derselbe. Zwei aehnliche
 # Regeln an zwei Stellen sind schlimmer als eine strenge: dann entscheidet
 # die Datei, und nicht der Vertrag.
