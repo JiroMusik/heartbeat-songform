@@ -31,7 +31,7 @@ echo "[start] Rechenort '${ORT_NAME}' fuer Aufgabe '${AUFGABE}'"
 if [ -z "$BASIS_URL" ]; then
     echo "[start] ABBRUCH: BASIS_URL ist nicht gesetzt." >&2
     echo "[start] Sie muss auf den Lichtrechner zeigen, z. B." >&2
-    echo "[start]   BASIS_URL=http://100.73.50.47:5555" >&2
+    echo "[start]   BASIS_URL=http://dmx-control:5555  (MagicDNS-Name, keine IP)" >&2
     exit 1
 fi
 

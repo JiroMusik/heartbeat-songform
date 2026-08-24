@@ -37,7 +37,7 @@ Im Abbild steht kein einziger Zugangswert.
 
 | Variable | Pflicht | Bedeutung |
 |---|---|---|
-| `BASIS_URL` | ja | Adresse des Lichtrechners, z. B. `http://100.73.50.47:5555`. **Kein Vorgabewert** — fehlt sie, bricht der Start ab |
+| `BASIS_URL` | ja | Adresse des Lichtrechners, z. B. `http://dmx-control:5555` — der **MagicDNS-Name**, keine IP (die SOCKS5-Auflösung läuft auf der Tailscale-Seite, `rdns` ist PySocks-Vorgabe). **Kein Vorgabewert** — fehlt sie, bricht der Start ab |
 | `ORT_NAME` | ja | die **Kennung** des Orts aus `rechenorte.json`, nicht sein Anzeigename |
 | `ZUTRITT_SCHLUESSEL` | ja¹ | als `X-Rechenort-Schluessel`; ohne ihn antwortet der Lichtrechner aus dem Tunnel auf **alle** Routen mit 403 |
 | `TS_AUTHKEY` | ja¹ | Tailscale-Schlüssel, **reusable** und **ephemeral**. Ein einmaliger lässt genau einen Worker herein — jeder weitere bekommt „invalid key" |

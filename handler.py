@@ -64,7 +64,8 @@ BASIS_URL = (os.environ.get("BASIS_URL") or "").strip().rstrip("/")
 if not BASIS_URL:
     raise SystemExit(
         "[start] ABBRUCH: BASIS_URL ist nicht gesetzt. Sie muss auf den "
-        "Lichtrechner zeigen, z. B. http://100.73.50.47:5555")
+        "Lichtrechner zeigen, z. B. http://dmx-control:5555 -- der "
+        "MagicDNS-Name, keine IP: Adressen wechseln, Namen bleiben")
 ORT = os.environ.get("ORT_NAME", "cloud")
 AUFGABE = os.environ.get("AUFGABE", "songform")
 # Vorgabe des Modells ist SongForm-HX-8Class (8 Klassen). SongForm-HX-Widen
