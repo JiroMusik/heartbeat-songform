@@ -39,7 +39,11 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      # Actions auf Commit-SHA festgenagelt (nicht auf bewegliche Tags):
+      # bei "packages: write" koennte ein uebernommenes Action-Tag Code
+      # einschleusen, der GITHUB_TOKEN abgreift und ":latest" vergiftet.
+      # Version im Kommentar; Erneuerung z. B. via Dependabot.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Der Laeufer hat ~14 GB frei, das Abbild samt Basis und
       # gebackenen Gewichten braucht mehr. Die vorinstallierten SDKs
@@ -49,16 +53,16 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/jiromusik/heartbeat-songform
           tags: |
@@ -66,7 +70,7 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
