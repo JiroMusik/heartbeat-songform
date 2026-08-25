@@ -46,14 +46,44 @@ fi
 
 NAME="heartbeat-worker-$ORT_NAME"
 echo "Ziehe $ABBILD ..."
-docker pull "$ABBILD"
+# set -e allein braeche hier ab, aber ohne ein Wort zum Warum. Ein
+# ehrlicher Satz bei Pull/Run-Fehler haelt beide Skripte gleichauf mit
+# der ps1-Fassung.
+docker pull "$ABBILD" || {
+    echo "FEHLER: 'docker pull' fehlgeschlagen. Kein Netz, GHCR-Paket privat" >&2
+    echo "oder Tag entfernt? Der Worker wurde NICHT gestartet." >&2
+    exit 1
+}
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-docker run -d --name "$NAME" --restart unless-stopped $GPU \
-    -e BETRIEBSART=schleife \
-    -e BASIS_URL="$BASIS_URL" \
-    -e ORT_NAME="$ORT_NAME" \
-    -e AUFGABE="$AUFGABE" \
-    "$ABBILD"
+
+# STARTEN -- erst mit GPU (falls erkannt), und wenn GENAU das scheitert,
+# ohne. "--gpus all" verlangt das nvidia-container-toolkit, nicht nur den
+# Treiber (nvidia-smi); fehlt das Toolkit, kommt "could not select device
+# driver". Dann ist ein CPU-Worker besser als gar keiner.
+starte_worker() {
+    docker run -d --name "$NAME" --restart unless-stopped "$@" \
+        -e BETRIEBSART=schleife \
+        -e BASIS_URL="$BASIS_URL" \
+        -e ORT_NAME="$ORT_NAME" \
+        -e AUFGABE="$AUFGABE" \
+        "$ABBILD"
+}
+
+if starte_worker $GPU; then
+    :
+elif [ -n "$GPU" ]; then
+    echo "GPU-Start fehlgeschlagen -- fehlt das nvidia-container-toolkit?" >&2
+    echo "Zweiter Versuch ohne GPU (CPU, langsam)." >&2
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    starte_worker || {
+        echo "FEHLER: 'docker run' fehlgeschlagen. Der Worker laeuft NICHT." >&2
+        exit 1
+    }
+else
+    echo "FEHLER: 'docker run' fehlgeschlagen. Laeuft der Docker-Daemon?" >&2
+    echo "Der Worker laeuft NICHT." >&2
+    exit 1
+fi
 echo
 echo "Worker '$NAME' laeuft. Protokoll:  docker logs -f $NAME"
 echo "Nicht vergessen: im Admin unter Rechenorte den Ort '$ORT_NAME'"
