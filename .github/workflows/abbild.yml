@@ -22,6 +22,11 @@ name: abbild
 on:
   push:
     branches: [master]
+    # Skripte und Doku aendern das Abbild nicht — ein 8-GB-Bau fuer
+    # eine README-Zeile waere reine Verschwendung.
+    paths-ignore:
+      - "scripts/**"
+      - "README.md"
   release:
     types: [published]
   workflow_dispatch:
