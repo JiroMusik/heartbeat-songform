@@ -25,11 +25,13 @@ Ergebnis trägt das Feld `worker`, hier `<ort>:songformer`.
 
 | `BETRIEBSART` | Verhalten |
 |---|---|
-| `serverless` (Vorgabe) | Der Ort wird **geweckt**. Serverless skaliert auf null; zwischen zwei Aufträgen existiert er nicht und könnte gar nicht fragen |
-| `schleife` | Der Ort **fragt selbst**, in Ruhe, immer wieder — das Gerüst aus `docs/ANLEITUNG_ANALYSE_WORKER.md` §5. Für Maschinen, die ohnehin laufen |
+| `direkt` | **Der Produkt-Weg für die Cloud (25.08.2026):** das Audio steckt komprimiert in der Anfrage, das Ergebnis geht als Job-Antwort zurück. Der Container ruft niemanden an — keine Adresse, **kein Geheimnis in der Umgebung** |
+| `serverless` (Vorgabe) | Abhol-Weg für geweckte Orte — historisch, die Klingel ruft heute keinen Cloud-Ort mehr |
+| `schleife` | Der Ort **fragt selbst**, in Ruhe, immer wieder — für Maschinen im eigenen Netz, die ohnehin laufen (`scripts/worker-install.*` richtet genau das ein) |
 
-Beides ist derselbe Weg zum Auftrag (`/api/analyse/holen`); der Unterschied
-ist nur, wer den ersten Schritt tut.
+Der Tailscale-Tunnel der ersten Fassung ist **vollständig entfallen**:
+der Direkt-Weg braucht keinen Rückkanal, und LAN-Worker sprechen den
+Lichtrechner ohnehin direkt an.
 
 ## Umgebungsvariablen
 
@@ -37,34 +39,25 @@ Im Abbild steht kein einziger Zugangswert.
 
 | Variable | Pflicht | Bedeutung |
 |---|---|---|
-| `BASIS_URL` | ja | Adresse des Lichtrechners, z. B. `http://dmx-control:5555` — der **MagicDNS-Name**, keine IP (die SOCKS5-Auflösung läuft auf der Tailscale-Seite, `rdns` ist PySocks-Vorgabe). **Kein Vorgabewert** — fehlt sie, bricht der Start ab |
-| `ORT_NAME` | ja | die **Kennung** des Orts aus `rechenorte.json`, nicht sein Anzeigename |
-| `ZUTRITT_SCHLUESSEL` | ja¹ | als `X-Rechenort-Schluessel`; ohne ihn antwortet der Lichtrechner aus dem Tunnel auf **alle** Routen mit 403 |
-| `TS_AUTHKEY` | ja¹ | Tailscale-Schlüssel, **reusable** und **ephemeral**. Ein einmaliger lässt genau einen Worker herein — jeder weitere bekommt „invalid key" |
+| `BASIS_URL` | ja¹ | Adresse des Lichtrechners im eigenen Netz, z. B. `http://192.168.1.50:5555`. **Kein Vorgabewert** — fehlt sie, bricht der Start ab |
+| `ORT_NAME` | ja | die **Kennung** des Orts aus den Rechenorten, nicht sein Anzeigename |
 | `AUFGABE` | — | `songform` |
 | `TAXONOMIE` | — | `SongForm-HX-Widen` |
 | `MODELL_REPO` | — | leer = offizielles Modell |
-| `BETRIEBSART` | — | `serverless` oder `schleife` |
+| `BETRIEBSART` | — | `direkt`, `serverless` oder `schleife` |
 
-¹ nur, wenn der Ort über den Tunnel kommt. Eine Maschine im Studio-Netz
-braucht beides nicht.
+¹ entfällt in der Betriebsart `direkt` — dort ruft der Container niemanden an.
 
 ## Start
 
-`start.sh` läuft vor dem Handler und tut drei Dinge in dieser Reihenfolge:
-
-1. **Tailnet beitreten** — im Userspace-Modus, ohne `/dev/net/tun` und ohne
-   `NET_ADMIN`. Das ist der von Tailscale für Serverless vorgesehene Modus
-   (`TS_USERSPACE` ist dort die Vorgabe); Kernel-Modus verlangt beides.
-2. **Erreichbarkeit belegen** — ein Aufruf von `/api/analyse/wav` ohne id.
-   Der antwortet `404 unbekannte id` und beansprucht nichts. So sind die drei
-   Fehlerarten unterscheidbar: Verbindungsfehler = kein Tunnel, 403 =
-   Schlüssel falsch, 404 = alles in Ordnung.
-3. **Übergeben** — `exec` auf den Handler.
-
-Bricht Schritt 1 oder 2 ab, startet der Handler gar nicht erst: ein Worker,
-der einen Auftrag beansprucht und ihn dann nicht holen kann, blockiert ihn für
-die Dauer der Reservierung.
+`start.sh` läuft vor dem Handler: in der Betriebsart `direkt` übergibt es
+sofort; im Abhol-Betrieb belegt es erst die **Erreichbarkeit** (ein Aufruf
+von `/api/analyse/wav` ohne id antwortet `404 unbekannte id` und beansprucht
+nichts — Verbindungsfehler heißt also „Adresse/Netz", 404 heißt „alles in
+Ordnung") und meldet dabei die Grafikkarte der Maschine mit. Bricht die
+Probe ab, startet der Handler gar nicht erst: ein Worker, der einen Auftrag
+beansprucht und ihn dann nicht holen kann, blockiert ihn für die Dauer der
+Reservierung.
 
 ## Gemessen am 18.08.2026
 

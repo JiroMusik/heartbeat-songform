@@ -15,10 +15,10 @@ ZWEI BETRIEBSARTEN, dasselbe Abbild (s. BETRIEBSART am Dateiende):
               die ohnehin laeuft: Studio-PC, Laptop, zweiter Server.
 
 Beides ist derselbe Weg zum Auftrag (/api/analyse/holen); der Unterschied ist
-nur, wer den ersten Schritt tut.
-
-Erreichbar ist der Lichtrechner ueber den Tunnel (Tailscale). Es wird kein eingehender
-Port am Lichtrechner geoeffnet -- der Container baut die Verbindung auf.
+nur, wer den ersten Schritt tut. Und seit dem 25.08.2026 gibt es die dritte
+Betriebsart "direkt": das Audio steckt in der Anfrage, das Ergebnis geht als
+Antwort zurueck -- der Container ruft niemanden an. Der Tailscale-Tunnel der
+ersten Fassung ist damit vollstaendig entfallen.
 
 Eingabe:
     {"input": {}}                      -> holt den naechsten songform-Auftrag
@@ -38,7 +38,6 @@ import json
 import urllib.error
 import urllib.request
 
-import netz
 import runpod
 
 # DIE ADRESSE DES LICHTRECHNERS -- ein Name, keine Erfindung, und kein
@@ -97,22 +96,14 @@ TAXONOMIE_IDS = {
     # "EDMFormer": 9,         # erst mit eigenem, nachtrainiertem Modell
 }
 
-# ZUTRITT. Der Lichtrechner prueft jede Anfrage aus dem Tailnet (100.64.0.0/10,
-# fd7a:115c:a1e0::/48) auf diese Kopfzeile -- ohne sie antwortet er mit 403,
-# und zwar auf ALLE vier Routen einschliesslich des WAV-Downloads. Der
-# Studio-PC im Studio-Netz braucht sie nicht; dieser Container schon.
-# Der Wert gehoert in die Geheimnisverwaltung des Endpunkts, nie ins Abbild.
-ZUTRITT = os.environ.get("ZUTRITT_SCHLUESSEL", "").strip()
-
 HTTP_TIMEOUT = 30
 WAV_TIMEOUT = 300
 
 
 def _kopfzeilen(extra=None):
-    kopf = dict(extra or {})
-    if ZUTRITT:
-        kopf["X-Rechenort-Schluessel"] = ZUTRITT
-    return kopf
+    # Der Tunnel-Schluessel der ersten Fassung ist entfallen (25.08.2026)
+    # -- LAN-Worker brauchen keinen, der Direkt-Weg ruft niemanden an.
+    return dict(extra or {})
 
 
 # ---------------------------------------------------------------------------
@@ -138,11 +129,6 @@ _vertraeglichkeit()
 import torch  # noqa: E402
 from huggingface_hub import snapshot_download  # noqa: E402
 from transformers import AutoModel  # noqa: E402
-
-# ERST DEN WEG, DANN DAS MODELL. Ohne das laed der Container vierzig
-# Sekunden lang Gewichte, um danach festzustellen, dass er niemanden
-# erreicht.
-print(f"[netz] Weg ins Tailnet: {netz.einrichten()}", flush=True)
 
 print(f"[start] lade Modell {MODELL_REPO}", flush=True)
 _t0 = time.monotonic()
