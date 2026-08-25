@@ -12,11 +12,12 @@
 # Commit-Hash (unveraenderlich, das zieht der Endpoint), bei Releases
 # zusaetzlich mit der Versionsnummer, auf master zusaetzlich "latest".
 #
-# AUSROLLEN. Steht in den Repo-Einstellungen ein RUNPOD_API_KEY
-# (Secret) und eine RUNPOD_TEMPLATE_ID (Variable), zieht der zweite
-# Job das RunPod-Template per PATCH auf den frischen Hash-Tag — der
-# naechste Kaltstart faehrt das neue Abbild. Fehlt beides, bleibt der
-# Bau einfach liegen: bauen und ausrollen sind getrennte Entscheidungen.
+# AUSROLLEN passiert NICHT hier (25.08.2026): der Lichtrechner traegt
+# den RunPod-Schluessel ohnehin und bumpt das Template selbst
+# (cloud_worker.ausrollen, Knopf "Abbild aktualisieren" in der
+# Rechenkarte). Ein GitHub-Secret fuer denselben Schluessel waere eine
+# zweite Kopie an einem zweiten Ort — genau die Sorte Drift, die das
+# Projekt plagt.
 name: abbild
 
 on:
@@ -71,22 +72,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-  ausrollen:
-    needs: bauen
-    runs-on: ubuntu-latest
-    steps:
-      - name: RunPod-Template auf das neue Abbild ziehen
-        env:
-          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
-          TEMPLATE_ID: ${{ vars.RUNPOD_TEMPLATE_ID }}
-        run: |
-          if [ -z "$RUNPOD_API_KEY" ] || [ -z "$TEMPLATE_ID" ]; then
-            echo "Kein RunPod-Ziel hinterlegt — Bau liegt bereit, ausgerollt wird nicht."
-            exit 0
-          fi
-          curl -fsS -X PATCH "https://rest.runpod.io/v1/templates/$TEMPLATE_ID" \
-            -H "Authorization: Bearer $RUNPOD_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"imageName\": \"ghcr.io/jiromusik/heartbeat-songform:${GITHUB_SHA:0:7}\"}"
-          echo "Template $TEMPLATE_ID zeigt jetzt auf :${GITHUB_SHA:0:7}"
