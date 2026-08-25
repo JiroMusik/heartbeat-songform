@@ -5,20 +5,22 @@ Dieser Container ist ein Rechenort im Sinne der Anleitung: Er holt sich seinen
 Auftrag selbst beim Lichtrechner, laedt das WAV, rechnet und liefert das Ergebnis
 zurueck -- ueber dieselben Endpunkte wie jeder andere Rechenort.
 
-ZWEI BETRIEBSARTEN, dasselbe Abbild (s. BETRIEBSART am Dateiende):
+DREI BETRIEBSARTEN, dasselbe Abbild (s. BETRIEBSART am Dateiende):
 
   serverless  Der Ort wird GEWECKT. Serverless skaliert auf null; zwischen
               zwei Aufrufen existiert er nicht und koennte gar nicht fragen.
               Deshalb klingelt der Lichtrechner, sobald ein Auftrag entsteht.
-  schleife    Der Ort FRAGT SELBST, in Ruhe, immer wieder -- das Geruest aus
-              docs/ANLEITUNG_ANALYSE_WORKER.md Paragraph 5. Fuer jede Maschine,
-              die ohnehin laeuft: Studio-PC, Laptop, zweiter Server.
+  schleife    Der Ort FRAGT SELBST, in Ruhe, immer wieder -- fuer jede
+              Maschine, die ohnehin laeuft: Studio-PC, Laptop, zweiter Server
+              (docs/ANLEITUNG_ANALYSE_WORKER.md, im Lichtrechner-Repo).
+  direkt      Das Audio steckt in der ANFRAGE, das Ergebnis geht als ANTWORT
+              zurueck -- der Container ruft NIEMANDEN an (kein Rueckkanal,
+              kein Geheimnis im Container). Der Produkt-Weg fuer die Cloud
+              seit dem 25.08.2026; der Tailscale-Tunnel der ersten Fassung
+              ist damit vollstaendig entfallen.
 
-Beides ist derselbe Weg zum Auftrag (/api/analyse/holen); der Unterschied ist
-nur, wer den ersten Schritt tut. Und seit dem 25.08.2026 gibt es die dritte
-Betriebsart "direkt": das Audio steckt in der Anfrage, das Ergebnis geht als
-Antwort zurueck -- der Container ruft niemanden an. Der Tailscale-Tunnel der
-ersten Fassung ist damit vollstaendig entfallen.
+serverless und schleife gehen denselben Weg zum Auftrag
+(/api/analyse/holen); der Unterschied ist nur, wer den ersten Schritt tut.
 
 Eingabe:
     {"input": {}}                      -> holt den naechsten songform-Auftrag
@@ -36,6 +38,7 @@ import tempfile
 import time
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import runpod
@@ -71,8 +74,8 @@ BASIS_URL = (os.environ.get("BASIS_URL") or "").strip().rstrip("/")
 if not BASIS_URL and _BETRIEBSART != "direkt":
     raise SystemExit(
         "[start] ABBRUCH: BASIS_URL ist nicht gesetzt. Sie muss auf den "
-        "Lichtrechner zeigen, z. B. http://dmx-control:5555 -- der "
-        "MagicDNS-Name, keine IP: Adressen wechseln, Namen bleiben")
+        "Lichtrechner im eigenen Netz zeigen, z. B. "
+        "http://192.168.1.50:5555")
 ORT = os.environ.get("ORT_NAME", "cloud")
 AUFGABE = os.environ.get("AUFGABE", "songform")
 # Vorgabe des Modells ist SongForm-HX-8Class (8 Klassen). SongForm-HX-Widen
@@ -86,9 +89,21 @@ TAXONOMIE = os.environ.get("TAXONOMIE", "SongForm-HX-Widen")
 # laeuft das offizielle ASLP-lab/SongFormer. Ist die Variable gesetzt, wird
 # stattdessen dieses HuggingFace-Repo geladen -- eine Konfigurationsaenderung
 # am Endpunkt, kein neues Abbild und keine Codeaenderung.
-# Siehe training/README.md: der teure Teil ist das Annotieren, nicht die
+# Der teure Teil eines eigenen Modells ist das Annotieren, nicht die
 # Rechenzeit.
 MODELL_REPO = os.environ.get("MODELL_REPO", "").strip() or "ASLP-lab/SongFormer"
+# REVISION FESTNAGELN. Ohne revision= zieht snapshot_download unten den
+# jeweils neuesten Stand des Repos -- und weil das Modell mit
+# trust_remote_code geladen wird, heisst "neuester Stand" auch "neuester
+# Code, als root ausgefuehrt". Der Vorgabewert ist der gepruefte
+# main-Commit von ASLP-lab/SongFormer (Stand 2026-05-14), derselbe, den das
+# Abbild backt (Dockerfile ENV MODELL_REVISION) -- der Laufzeit-Aufruf
+# trifft also den Cache und laedt nichts nach. Ein eigenes MODELL_REPO
+# braucht ein eigenes MODELL_REVISION; der SongFormer-Commit existiert dort
+# nicht, der Start bricht dann sichtbar ab (besser als stumm neuen Code
+# zu ziehen).
+_SONGFORMER_REVISION = "a75880ed1b7375ac71860ec6c4fc9c899cf99515"
+MODELL_REVISION = os.environ.get("MODELL_REVISION", "").strip() or _SONGFORMER_REVISION
 TAXONOMIE_IDS = {
     "SongForm-HX-7Class": 0,
     "SongForm-HX-Widen": 1,   # ungekuerzter HarmonixSet-Satz, Vorgabe
@@ -132,7 +147,7 @@ from transformers import AutoModel  # noqa: E402
 
 print(f"[start] lade Modell {MODELL_REPO}", flush=True)
 _t0 = time.monotonic()
-_LOKAL = snapshot_download(MODELL_REPO, repo_type="model")
+_LOKAL = snapshot_download(MODELL_REPO, repo_type="model", revision=MODELL_REVISION)
 sys.path.insert(0, _LOKAL)
 os.environ["SONGFORMER_LOCAL_DIR"] = _LOKAL
 
@@ -198,13 +213,39 @@ def _mit_wiederholung(was, tun):
     raise letzter
 
 
+# NUR ZUM LICHTRECHNER, UND OHNE UMLEITUNG.
+#
+# wav_pfad kommt aus der Antwort des Lichtrechners. Ein untergeschobenes
+# "@evil.example/x" oder "//evil.example/x" wuerde sonst einen fremden Host
+# adressieren (urllib liest bis zum letzten '@' als Benutzerteil), und
+# urllib folgt Weiterleitungen ungefragt. Beides schneiden wir ab: der Host
+# muss der von BASIS_URL bleiben, und 3xx wird nicht gefolgt.
+class _KeineWeiterleitung(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_KeineWeiterleitung)
+
+
+def _url_am_lichtrechner(pfad):
+    voll = f"{BASIS_URL}{pfad}"
+    soll = urllib.parse.urlsplit(BASIS_URL)
+    ist = urllib.parse.urlsplit(voll)
+    if (ist.scheme, ist.hostname, ist.port) != (soll.scheme, soll.hostname, soll.port):
+        raise ValueError(
+            f"Pfad zeigt auf einen fremden Host ({ist.hostname!r} statt "
+            f"{soll.hostname!r}) -- abgelehnt: {pfad!r}")
+    return voll
+
+
 def _post(pfad, nutzlast):
     daten = json.dumps(nutzlast).encode("utf-8")
     req = urllib.request.Request(
-        f"{BASIS_URL}{pfad}", data=daten, method="POST",
+        _url_am_lichtrechner(pfad), data=daten, method="POST",
         headers=_kopfzeilen({"Content-Type": "application/json"}))
     def einmal():
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with _OPENER.open(req, timeout=HTTP_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     try:
@@ -246,8 +287,8 @@ def wav_laden(wav_pfad, ziel):
 
 
 def _wav_einmal(wav_pfad, ziel):
-    with urllib.request.urlopen(
-            urllib.request.Request(f"{BASIS_URL}{wav_pfad}", headers=_kopfzeilen()),
+    with _OPENER.open(
+            urllib.request.Request(_url_am_lichtrechner(wav_pfad), headers=_kopfzeilen()),
             timeout=WAV_TIMEOUT) as resp, \
             open(ziel, "wb") as fh:
         gesamt = 0
@@ -263,15 +304,15 @@ def _wav_einmal(wav_pfad, ziel):
 # WIE VIELE AUFTRAEGE EIN WECKRUF HOLT.
 #
 # Der teure Teil ist der Kaltstart, nicht die Analyse: Abbild ziehen,
-# Tailnet beitreten, Modell laden. Ein warmer Ort, der nach dem ersten
+# Modell laden. Ein warmer Ort, der nach dem ersten
 # Auftrag stehen bleibt, waehrend zwei weitere liegen, verschenkt genau
 # das, was gerade bezahlt wurde. Am 18.08.2026 lagen drei Auftraege in
 # der Schlange, und es brauchte drei Weckrufe -- zwei davon gingen
 # verloren.
 #
 # Also: holen, bis nichts mehr kommt. Das ist auch die Bauform des
-# Protokolls ("holen statt zuteilen", docs/ANLEITUNG_ANALYSE_WORKER.md):
-# wer da ist und kann, nimmt.
+# Protokolls ("holen statt zuteilen", docs/ANLEITUNG_ANALYSE_WORKER.md im
+# Lichtrechner-Repo): wer da ist und kann, nimmt.
 #
 # ZWEI GRENZEN, damit daraus kein Dauerlauf wird:
 #   - die Warteschlange gibt nichts mehr her
@@ -318,11 +359,20 @@ def _direkt(eingabe):
         # ffmpeg statt eines Python-Dekoders: es liest jedes Format, das
         # ein Absender sinnvoll waehlen kann, und liegt ohnehin im Abbild.
         lauf = subprocess.run(
+            # -protocol_whitelist file,pipe: der Dateiinhalt kommt vom
+            # Absender. Ohne die Schranke koennte ein als Playlist getarntes
+            # "Audio" ffmpeg dazu bringen, http/file-Ziele im Container zu
+            # oeffnen -- wir dekodieren ausschliesslich lokale Bytes.
             ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-protocol_whitelist", "file,pipe",
              "-i", quelle, "-ac", "1", "-ar", "44100", wav],
             capture_output=True, text=True, timeout=180)
         if lauf.returncode != 0:
-            return {"fehler": "ffmpeg: " + (lauf.stderr or "?")[-300:]}
+            # stderr in die Container-Konsole, nicht zum Aufrufer zurueck:
+            # ffmpeg-Fehlertexte koennen ueber Datei-Unterschiede Interna
+            # verraten. Der Aufrufer bekommt einen knappen, harmlosen Grund.
+            print(f"[ffmpeg] {kennung}: {(lauf.stderr or '?')[-300:]}", flush=True)
+            return {"fehler": "Audio nicht dekodierbar (Details im Worker-Protokoll)"}
 
         t0 = time.monotonic()
         with torch.no_grad():
@@ -466,7 +516,12 @@ def _einen_auftrag():
             pass
 
 
-# ZWEI BETRIEBSARTEN, EIN ABBILD.
+# ZWEI EINSTIEGE, DREI BETRIEBSARTEN, EIN ABBILD.
+#
+# Hier unten faellt nur die Grundsatzentscheidung: Dauerlaeufer (schleife)
+# oder von RunPod geweckt (serverless.start). Die dritte Betriebsart
+# "direkt" ist kein eigener Einstieg -- sie wird je Anfrage am
+# mitgelieferten Audio erkannt (s. handler()).
 #
 # Serverless heisst: jemand weckt uns, wir arbeiten einen Auftrag ab und
 # verschwinden wieder. Das passt zu RunPod und zu nichts sonst.

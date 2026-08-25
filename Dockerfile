@@ -71,13 +71,27 @@ FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
+    # HF-Cache an einen Ort, den auch der non-root-USER (s. unten) lesen
+    # und schreiben darf. Vorgabe waere /root/.cache -- fuer appuser
+    # unerreichbar, und der gebackene Modell-Cache laege dort.
+    HF_HOME=/opt/hf \
+    # MODELL-REVISION FESTNAGELN. Ohne feste Revision zieht
+    # snapshot_download den jeweils neuesten Stand -- zusammen mit
+    # trust_remote_code beim Laden fuehrt das fremden Code aus, wenn das
+    # Repo uebernommen oder eine neue Revision eingestellt wird. Dies ist
+    # der gepruefte main-Commit von ASLP-lab/SongFormer (Stand 2026-05-14);
+    # der Build backt genau ihn, der Handler liest dieselbe ENV -- Abbild
+    # und Laufzeit ziehen denselben unveraenderlichen Stand. Ein eigenes
+    # MODELL_REPO braucht ein eigenes MODELL_REVISION (der SongFormer-Commit
+    # existiert dort nicht, der Start bricht dann sichtbar ab).
+    MODELL_REVISION=a75880ed1b7375ac71860ec6c4fc9c899cf99515 \
     # Der ungekuerzte HarmonixSet-Satz. Am 18.08.2026 an zwei EDM-Tracks
     # gemessen: gliedert sauberer als die 8-Klassen-Vorgabe (fasst das Intro
     # zusammen statt es zu zerhacken). EDM-Begriffe liefert er trotzdem nicht --
     # die Benennung passiert auf dem Lichtrechner.
     TAXONOMIE=SongForm-HX-Widen \
     # Leer = offizielles Modell. Fuer ein spaeter nachtrainiertes Modell hier
-    # das eigene HuggingFace-Repo eintragen, siehe training/README.md.
+    # das eigene HuggingFace-Repo eintragen (dann auch MODELL_REVISION setzen).
     MODELL_REPO="" \
     # KEIN Vorgabewert fuer ORT_NAME, mit Absicht. Er muss die KENNUNG des
     # Rechenorts aus config/rechenorte.json tragen. Steht dort etwas
@@ -92,6 +106,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# NON-ROOT. Das Abbild lief als root; zusammen mit trust_remote_code beim
+# Modell-Laden ist das mehr Recht als noetig -- ein uebernommenes Modell-Repo
+# haette root im Container. Ein eigener Nutzer, dem der HF-Cache (/opt/hf,
+# s. HF_HOME) und /app gehoeren. Angelegt VOR dem Backen der Gewichte, damit
+# der Cache gleich richtig gehoert.
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /opt/hf \
+    && chown -R appuser:appuser /opt/hf /app
 
 # TORCH BLEIBT, WAS DAS BASIS-ABBILD MITBRINGT.
 #
@@ -120,7 +143,8 @@ RUN pip freeze | grep -E "^(torch|torchvision|torchaudio)==" > /tmp/sperrliste.t
 # MusicFM. Das sind die 30 Dateien, deren Download auf dem StudioPC vier
 # Minuten gedauert hat -- die will niemand bei jedem Kaltstart erneut holen.
 RUN python -c "from huggingface_hub import snapshot_download; \
-    snapshot_download('ASLP-lab/SongFormer', repo_type='model')"
+    snapshot_download('ASLP-lab/SongFormer', repo_type='model', revision='${MODELL_REVISION}')" \
+    && chown -R appuser:appuser /opt/hf
 
 # KEIN TAILSCALE MEHR (25.08.2026). Der Tunnel war eine Konstruktion
 # der RunPod-Nacht vom 18.08., damit der Abhol-Worker den Lichtrechner
@@ -133,6 +157,12 @@ COPY handler.py /app/handler.py
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# start.sh prueft die Erreichbarkeit (nur Betriebsart schleife) und
-# uebergibt per exec an den Handler.
+# Ab hier laeuft alles als non-root. handler.py und start.sh sind
+# weltlesbar (COPY -> 644, chmod +x -> 755); geschrieben wird nur in
+# /tmp (tempfile) und /opt/hf (dem Cache gehoert appuser).
+USER appuser
+
+# start.sh prueft im Abhol-Betrieb (serverless wie schleife) die
+# Erreichbarkeit des Lichtrechners; nur "direkt" springt vorher heraus.
+# Danach uebergibt es per exec an den Handler.
 CMD ["/app/start.sh"]
