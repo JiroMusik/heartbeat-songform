@@ -21,7 +21,7 @@ Die Methode steht nicht in der Konfiguration: den Lichtrechner interessiert,
 **was** zurückkommt, nicht **womit**. Festgehalten wird sie trotzdem — jedes
 Ergebnis trägt das Feld `worker`, hier `<ort>:songformer`.
 
-## Zwei Betriebsarten, ein Abbild
+## Drei Betriebsarten, ein Abbild
 
 | `BETRIEBSART` | Verhalten |
 |---|---|
@@ -32,6 +32,20 @@ Ergebnis trägt das Feld `worker`, hier `<ort>:songformer`.
 Der Tailscale-Tunnel der ersten Fassung ist **vollständig entfallen**:
 der Direkt-Weg braucht keinen Rückkanal, und LAN-Worker sprechen den
 Lichtrechner ohnehin direkt an.
+
+## Was das Haus verlässt (Datenschutz)
+
+Mit einem **aktiven Cloud-Rechenort** (RunPod, Betriebsart `direkt`) schickt
+der Lichtrechner das Audio des laufenden Titels — als **Vorbis/Opus mono**,
+komprimiert — zusammen mit **Titel und Kennung** an RunPod und bekommt die
+**Gliederung** zurück. RunPod hält Ein- und Ausgabe eines Auftrags in seiner
+Konsole vor; das ist bei einem Serverless-Anbieter nicht vermeidbar.
+
+**Nicht** übertragen werden: andere Titel, sonstige Studio-Daten, und — in
+`direkt` — kein einziger Zugangswert (der Container trägt keinen). Wer das
+nicht will, lässt den Cloud-Rechenort inaktiv; die Analyse läuft dann lokal
+oder auf dem Studio-PC (Betriebsart `schleife`), und das Audio bleibt im
+eigenen Netz.
 
 ## Umgebungsvariablen
 
@@ -44,6 +58,7 @@ Im Abbild steht kein einziger Zugangswert.
 | `AUFGABE` | — | `songform` |
 | `TAXONOMIE` | — | `SongForm-HX-Widen` |
 | `MODELL_REPO` | — | leer = offizielles Modell |
+| `MODELL_REVISION` | — | fester Commit des Modell-Repos; Default: der im Abbild gebackene SongFormer-Stand |
 | `BETRIEBSART` | — | `direkt`, `serverless` oder `schleife` |
 
 ¹ entfällt in der Betriebsart `direkt` — dort ruft der Container niemanden an.
@@ -59,16 +74,36 @@ Probe ab, startet der Handler gar nicht erst: ein Worker, der einen Auftrag
 beansprucht und ihn dann nicht holen kann, blockiert ihn für die Dauer der
 Reservierung.
 
+## Bauen und Ausrollen
+
+**Bauen** übernimmt GitHub Actions: jeder Push nach `master` (außer reinen
+Änderungen an `scripts/**` oder `README.md`) und jedes Release baut das
+Abbild und schiebt es nach `ghcr.io/jiromusik/heartbeat-songform` — getaggt
+mit dem kurzen Commit-Hash (unveränderlich, den zieht der Endpoint), auf
+`master` zusätzlich `latest` (`.github/workflows/abbild.yml`). Ein
+RunPod-Secret braucht der Bau **nicht**, nur das automatische `GITHUB_TOKEN`.
+
+**Ausrollen** macht der Lichtrechner selbst: er trägt den RunPod-Schlüssel
+ohnehin und stößt über den Knopf **„Abbild aktualisieren"** in der
+Rechenorte-Karte einen Versions-Bump der Endpoint-Vorlage an
+(`cloud_worker.ausrollen`) — der nächste Kaltstart zieht das neue Abbild.
+Der Weg von Hand (`PATCH /templates/{id}`) bleibt als Rückfall.
+
 ## Gemessen am 18.08.2026
 
 | | |
 |---|---|
 | Abbildgröße | 17,8 GB |
-| torch | 2.4.1+cu124, an das Basis-Abbild gebunden |
+| torch | 2.8.0+cu128 (Basis-Abbild `pytorch/pytorch:2.8.0-cuda12.8`, seit 19.08. — Blackwell/`sm_120`) |
 | Gewichte beim Start | 30 Dateien, 0,0 s — sie liegen im Abbild |
 | Modell laden (CPU) | 37,6 s |
 | Analyse (CPU, 304 s Audio) | 316 s = 0,96× Echtzeit |
 | Erster vollständiger Durchlauf über RunPod | 20 Rohfenster, vom Lichtrechner zu 11 Abschnitten zusammengefasst |
+
+> **Achtung:** Abbildgröße und Zeiten oben stammen vom torch-2.4-Bau
+> (18.08.); seit dem Wechsel auf torch 2.8 / CUDA 12.8 (Blackwell,
+> `Dockerfile`) sind sie nicht neu gemessen. Nur die torch-Zeile ist der
+> aktuelle Stand.
 
 ## Was hier schon schiefging
 
@@ -85,5 +120,6 @@ Reservierung.
   (`runpod-python/rp_job.py`). Testaufrufe brauchen einen nichtleeren Inhalt —
   die Klingel schickt ohnehin einen.
 - **Jeder Build erzeugt eine neue Vorlage mit leerer Umgebung.** Nach einem
-  Neubau müssen alle Variablen erneut gesetzt werden; das geht über
-  `PATCH /templates/{id}` ohne weiteren Build.
+  Neubau müssen alle Variablen erneut gesetzt werden; das erledigt der Knopf
+  „Abbild aktualisieren" (s. „Bauen und Ausrollen"), notfalls
+  `PATCH /templates/{id}` von Hand.
